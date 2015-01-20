@@ -89,7 +89,7 @@ public class AMQPRPCClient extends AMQPSampler implements Interruptible {
 
         // aggregate samples.
         int loop = getIterationsAsInt();
-        result.sampleStart(); // Start timing
+        
         try {
             byte[] response = null;
 
@@ -99,17 +99,19 @@ public class AMQPRPCClient extends AMQPSampler implements Interruptible {
 
             channel.queueDeclare(getReplyToQueue(), false, true, true, null);
 
+            //log.debug("Start consuming on '" + getReplyToQueue() + "'");
+            channel.basicConsume(getReplyToQueue(), autoAck(), consumer);
+
             for (int idx = 0; idx < loop; idx++) {
-                // try to force jms semantics.
+                
+            	result.sampleStart(); // Start timing
+            	
+            	// try to force jms semantics.
                 // but this does not work since RabbitMQ does not sync to disk if consumers are connected as
                 // seen by iostat -cd 1. TPS value remains at 0.
 
                 //log.debug("Publish message on queue '"+ getMessageRoutingKey() + "' (iteration:" + idx + ")");
                 channel.basicPublish("", getMessageRoutingKey(), messageProperties, messageBytes);
-
-                //log.debug("Start consuming on '" + getReplyToQueue() + "'");
-                channel.basicConsume(getReplyToQueue(), autoAck(), consumer);
-
 
                 try {
                     while (true) {
@@ -124,35 +126,39 @@ public class AMQPRPCClient extends AMQPSampler implements Interruptible {
                             break;
                         }
                     }
+
+                    /*
+                     * Set up the sample result details
+                     */
+                    result.sampleEnd();
+                    result.setSamplerData(data);
+                    result.setResponseData(new String(response), null);
+                    result.setDataType(SampleResult.TEXT);
+
+                    result.setResponseCodeOK();
+                    result.setResponseMessage("OK");
+                    result.setSuccessful(true);                    
                 }
                 catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
+	            catch (Exception ex) {
+	                log.info(ex.getMessage(), ex);
+	                result.sampleEnd();
+	                result.setResponseCode("000");
+	                result.setResponseMessage(ex.toString());
+	            }
             }
 
             // commit the sample.
             if (getUseTx()) {
                 channel.txCommit();
             }
-
-            /*
-             * Set up the sample result details
-             */
-            result.setSamplerData(data);
-            result.setResponseData(new String(response), null);
-            result.setDataType(SampleResult.TEXT);
-
-            result.setResponseCodeOK();
-            result.setResponseMessage("OK");
-            result.setSuccessful(true);
-        } catch (Exception ex) {
-            log.info(ex.getMessage(), ex);
-            result.setResponseCode("000");
-            result.setResponseMessage(ex.toString());
+        } catch (IOException ioe) {
+            log.info(ioe.getMessage(), ioe);
         }
-        finally {
-            result.sampleEnd(); // End timimg
-        }
+
+
 
         return result;
     }
